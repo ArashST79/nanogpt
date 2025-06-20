@@ -75,4 +75,4 @@ After training, you can:
 1. Fine-tune the model on MMLU dataset
 2. Experiment with different model configurations
 3. Try different training hyperparameters
-4. Generate more text samples with the trained model 
+4. Generate more text samples with the trained model # nanogpt
