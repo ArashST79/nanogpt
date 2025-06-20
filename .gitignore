@@ -1,0 +1,48 @@
+# Ignore Python cache and environment files
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.env
+.venv
+
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# Ignore model and data files
+*.pth
+*.pt
+*.ckpt
+*.cat
+*.h5
+*.npz
+*.npy
+*.safetensors
+models/gpt2/*
+!models/gpt2/.gitkeep
+data/*
+!data/.gitkeep
+# Ignore large datasets
+datasets/*
+!datasets/.gitkeep
+*.csv
+*.jsonl
+*.json
+
+# Ignore logs and outputs
+*.log
+wandb/
+logs/
+outputs/
+runs/
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+
+# Ignore downloads folder
+downloads/*
+!downloads/.gitkeep
