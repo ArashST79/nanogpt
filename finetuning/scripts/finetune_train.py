@@ -6,6 +6,7 @@ from tqdm import tqdm
 from pathlib import Path
 import yaml
 from sklearn.model_selection import train_test_split
+import torch.nn as nn
 
 # Add project root to sys.path for imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -34,16 +35,23 @@ config.max_seq_length = int(config.max_seq_length)
 from pretraining.scripts.model import GPT
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
 from finetuning.models.nano_gpt_classifier import NanoGPTClassifier
+from finetuning.models.gpt2_classifier import GPT2Classifier, gpt2_collate_fn
 
 # Example dataset loaders (expand as needed)
 class SST2Dataset(Dataset):
-    def __init__(self, dataframe, tokenizer, max_seq_length):
+    def __init__(self, dataframe, tokenizer, max_seq_length, return_text=False):
         self.samples = []
+        self.return_text = return_text
+        self.tokenizer = tokenizer
+        self.max_seq_length = max_seq_length
         for _, row in dataframe.iterrows():
             text = row['sentence']
             label = int(row['label'])
-            tokens = tokenizer(text, max_length=max_seq_length)
-            self.samples.append((tokens, label))
+            if return_text:
+                self.samples.append((text, label))
+            else:
+                tokens = tokenizer(text, max_length=max_seq_length)
+                self.samples.append((tokens, label))
     def __len__(self):
         return len(self.samples)
     def __getitem__(self, idx):
@@ -117,8 +125,8 @@ def main():
                 model.load_state_dict(torch.load(ckpt_path, map_location=device))
         model = model.to(device)
     elif config.model_type == "gpt2":
-        model = GPT2LMHeadModel.from_pretrained("models/gpt2")
-        tokenizer = GPT2Tokenizer.from_pretrained("models/gpt2")
+        model = GPT2Classifier(config.gpt2_dir, num_classes=2)
+        tokenizer = model.tokenizer
         model = model.to(device)
     else:
         raise ValueError(f"Unknown model_type: {config.model_type}")
@@ -133,10 +141,22 @@ def main():
         train_df, val_df = train_test_split(
             df, test_size=0.1, random_state=42, stratify=df["label"]
         )
-        train_dataset = SST2Dataset(train_df, tokenizer, config.max_seq_length)
-        val_dataset = SST2Dataset(val_df, tokenizer, config.max_seq_length)
-        train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
-        val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False)
+        if config.model_type == "gpt2":
+            train_dataset = SST2Dataset(train_df, tokenizer, config.max_seq_length, return_text=True)
+            val_dataset = SST2Dataset(val_df, tokenizer, config.max_seq_length, return_text=True)
+            train_loader = DataLoader(
+                train_dataset, batch_size=config.batch_size, shuffle=True,
+                collate_fn=lambda batch: gpt2_collate_fn(batch, tokenizer, config.max_seq_length)
+            )
+            val_loader = DataLoader(
+                val_dataset, batch_size=config.batch_size, shuffle=False,
+                collate_fn=lambda batch: gpt2_collate_fn(batch, tokenizer, config.max_seq_length)
+            )
+        else:
+            train_dataset = SST2Dataset(train_df, tokenizer, config.max_seq_length)
+            val_dataset = SST2Dataset(val_df, tokenizer, config.max_seq_length)
+            train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
+            val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False)
     elif config.dataset == "mmlu":
         dataset = MMLUDataset(config_data_dir, tokenizer, config.max_seq_length)
         train_loader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
@@ -162,12 +182,10 @@ def main():
                     logits, loss = model(inputs, labels)
                 else:
                     logits, loss = model(inputs, labels)
-            else:  # gpt2
+            elif config.model_type == "gpt2":
                 inputs, labels = batch
-                inputs = inputs.to(device)
-                outputs = model(inputs, labels=inputs)
-                loss = outputs.loss
-                logits = outputs.logits
+                inputs, labels = inputs.to(device), labels.to(device)
+                logits, loss = model(inputs, labels)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -189,7 +207,10 @@ def main():
                 for batch in val_loader:
                     inputs, labels = batch
                     inputs, labels = inputs.to(device), labels.to(device)
-                    logits, loss = model(inputs, labels)
+                    if config.model_type == "nano-gpt":
+                        logits, loss = model(inputs, labels)
+                    elif config.model_type == "gpt2":
+                        logits, loss = model(inputs, labels)
                     val_losses.append(loss.item())
                     preds = torch.argmax(logits, dim=1)
                     correct += (preds == labels).sum().item()
@@ -209,7 +230,7 @@ def main():
         elif config.model_type == "nano-gpt":
             torch.save(model.state_dict(), epoch_save_path)
         else:
-            model.save_pretrained(config.save_dir)
+            torch.save(model.state_dict(), epoch_save_path)
         print(f"Model saved to {epoch_save_path}")
 
 if __name__ == "__main__":
